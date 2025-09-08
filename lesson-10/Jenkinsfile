@@ -1,0 +1,126 @@
+ pipeline {
+     agent {
+         kubernetes {
+             yaml """
+ apiVersion: v1
+ kind: Pod
+ spec:
+   containers:
+   - name: kaniko
+     image: gcr.io/kaniko-project/executor:debug
+     command:
+     - sleep
+     args:
+     - 99d
+     volumeMounts:
+     - name: aws-credentials
+       mountPath: /root/.aws
+     - name: docker-config
+       mountPath: /kaniko/.docker
+   - name: git
+     image: alpine/git:latest
+     command:
+     - sleep
+     args:
+     - 99d
+   volumes:
+   - name: aws-credentials
+     secret:
+       secretName: aws-credentials
+   - name: docker-config
+     configMap:
+       name: docker-config
+ """
+         }
+     }
+
+     environment {
+         ECR_REGION = 'eu-west-1'
+         ECR_REPOSITORY = '381492144666.dkr.ecr.eu-west-1.amazonaws.com/lesson-8-9-ecr'
+         GIT_REPO = 'https://github.com/your-username/helm-charts.git'
+         GIT_BRANCH = 'main'
+         DOCKERFILE_PATH = './lesson-4'
+         CHART_PATH = './charts/django-app'
+     }
+
+     stages {
+         stage('Checkout') {
+             steps {
+                 container('git') {
+                     script {
+                         checkout scm
+                         env.BUILD_TAG = sh(
+                             script: "echo \${BUILD_NUMBER}-\$(git rev-parse --short HEAD)",
+                             returnStdout: true
+                         ).trim()
+                         echo "Build tag: ${env.BUILD_TAG}"
+                     }
+                 }
+             }
+         }
+
+         stage('Build and Push Docker Image') {
+             steps {
+                 container('kaniko') {
+                     script {
+                         sh """
+                             echo "Building Docker image with tag: ${env.BUILD_TAG}"
+                             /kaniko/executor \\
+                                 --dockerfile=${env.DOCKERFILE_PATH}/Dockerfile \\
+                                 --context=${env.DOCKERFILE_PATH} \\
+                                 --destination=${env.ECR_REPOSITORY}:${env.BUILD_TAG} \\
+                                 --destination=${env.ECR_REPOSITORY}:latest \\
+                                 --cache=true \\
+                                 --compressed-caching=false
+                         """
+                     }
+                 }
+             }
+         }
+
+         stage('Update Helm Chart') {
+             steps {
+                 container('git') {
+                     script {
+                         withCredentials([usernamePassword(
+                             credentialsId: 'github-token',
+                             usernameVariable: 'GIT_USERNAME',
+                             passwordVariable: 'GIT_PASSWORD'
+                         )]) {
+                             sh """
+                                 git config --global user.email "jenkins@ci.local"
+                                 git config --global user.name "Jenkins CI"
+
+                                 # Clone the helm charts repository
+                                 git clone https://\${GIT_USERNAME}:\${GIT_PASSWORD}@github.com/your-username/helm-charts.git helm-charts-repo
+                                 cd helm-charts-repo
+
+                                 # Update the image tag in values.yaml
+                                 sed -i 's/tag: .*/tag: "${env.BUILD_TAG}"/' ${env.CHART_PATH}/values.yaml
+
+                                 # Commit and push changes
+                                 git add ${env.CHART_PATH}/values.yaml
+                                 git commit -m "Update Django app image tag to ${env.BUILD_TAG}"
+                                 git push origin ${env.GIT_BRANCH}
+                             """
+                         }
+                     }
+                 }
+             }
+         }
+     }
+
+     post {
+         always {
+             cleanWs()
+         }
+         success {
+             echo "Pipeline completed successfully!"
+             echo "Docker image pushed: ${env.ECR_REPOSITORY}:${env.BUILD_TAG}"
+             echo "Helm chart updated with new image tag"
+         }
+         failure {
+             echo "Pipeline failed! Check the logs above for details."
+         }
+     }
+ }
