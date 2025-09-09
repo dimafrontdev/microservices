@@ -1,0 +1,47 @@
+controller:
+  adminUser: "admin"
+  adminPassword: "admin123"
+  
+  serviceType: LoadBalancer
+  
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+  
+  installPlugins: []
+
+  JCasC:
+    defaultConfig: false
+
+agent:
+  enabled: true
+  image: "jenkins/inbound-agent"
+  tag: "3273.v4cfe589b_fd83-1"
+  workingDir: "/home/jenkins/agent"
+  nodeUsageMode: NORMAL
+  
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+persistence:
+  enabled: true
+  size: 20Gi
+  storageClass: "gp2"
+
+serviceAccount:
+  create: true
+  annotations:
+    eks.amazonaws.com/role-arn: ""
+
+rbac:
+  create: true
+  readSecrets: true

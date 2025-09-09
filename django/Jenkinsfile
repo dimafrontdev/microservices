@@ -1,0 +1,123 @@
+pipeline {
+    agent any
+    
+    environment {
+        ECR_REGISTRY = "${env.ECR_REPOSITORY_URL}"
+        ECR_REPOSITORY = "final-project-ecr"
+        IMAGE_TAG = "${BUILD_NUMBER}"
+        AWS_REGION = "eu-west-1"
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+        
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    echo "Building Docker image..."
+                    dir('Django') {
+                        sh """
+                            docker build -t ${ECR_REPOSITORY}:${IMAGE_TAG} .
+                            docker tag ${ECR_REPOSITORY}:${IMAGE_TAG} ${ECR_REGISTRY}:${IMAGE_TAG}
+                            docker tag ${ECR_REPOSITORY}:${IMAGE_TAG} ${ECR_REGISTRY}:latest
+                        """
+                    }
+                }
+            }
+        }
+        
+        stage('Login to ECR') {
+            steps {
+                script {
+                    sh """
+                        aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
+                    """
+                }
+            }
+        }
+        
+        stage('Push to ECR') {
+            steps {
+                script {
+                    sh """
+                        docker push ${ECR_REGISTRY}:${IMAGE_TAG}
+                        docker push ${ECR_REGISTRY}:latest
+                    """
+                }
+            }
+        }
+        
+        stage('Update Helm Values') {
+            steps {
+                script {
+                    sh """
+                        # Update image tag in values.yaml
+                        sed -i 's|tag: .*|tag: "${IMAGE_TAG}"|g' charts/django-app/values.yaml
+                        
+                        # Commit and push changes (if using GitOps with ArgoCD)
+                        git config --global user.email "jenkins@company.com"
+                        git config --global user.name "Jenkins"
+                        git add charts/django-app/values.yaml
+                        git commit -m "Update image tag to ${IMAGE_TAG}" || echo "No changes to commit"
+                        git push origin main || echo "Push failed - continuing"
+                    """
+                }
+            }
+        }
+        
+        stage('Deploy to EKS') {
+            steps {
+                script {
+                    sh """
+                        # Update kubeconfig
+                        aws eks update-kubeconfig --region ${AWS_REGION} --name final-project-eks-cluster
+                        
+                        # Deploy/upgrade using Helm
+                        helm upgrade --install django-app ./charts/django-app \\
+                            --namespace default \\
+                            --set image.repository=${ECR_REGISTRY} \\
+                            --set image.tag=${IMAGE_TAG} \\
+                            --wait --timeout=300s
+                    """
+                }
+            }
+        }
+        
+        stage('Verify Deployment') {
+            steps {
+                script {
+                    sh """
+                        # Check deployment status
+                        kubectl rollout status deployment/django-app --timeout=300s
+                        
+                        # Get service endpoints
+                        kubectl get services django-app
+                        kubectl get pods -l app=django-app
+                    """
+                }
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo "Pipeline completed successfully!"
+            echo "Django application deployed with image tag: ${IMAGE_TAG}"
+        }
+        failure {
+            echo "Pipeline failed!"
+        }
+        always {
+            // Clean up docker images to save space
+            sh """
+                docker rmi ${ECR_REPOSITORY}:${IMAGE_TAG} || true
+                docker rmi ${ECR_REGISTRY}:${IMAGE_TAG} || true
+                docker rmi ${ECR_REGISTRY}:latest || true
+            """
+        }
+    }
+}
