@@ -1,0 +1,78 @@
+global:
+  image:
+    tag: "v2.9.3"
+
+argo-cd:
+  dex:
+    enabled: false
+  
+  server:
+    service:
+      type: LoadBalancer
+    
+    config:
+      repositories: |
+        - type: git
+          url: https://github.com/your-username/helm-charts
+        - name: argo-helm
+          type: helm
+          url: https://argoproj.github.io/argo-helm
+    
+    additionalApplications:
+      - name: django-app
+        namespace: argocd
+        project: default
+        source:
+          repoURL: https://github.com/your-username/helm-charts
+          targetRevision: main
+          path: charts/django-app
+        destination:
+          server: https://kubernetes.default.svc
+          namespace: default
+        syncPolicy:
+          automated:
+            prune: true
+            selfHeal: true
+          syncOptions:
+            - CreateNamespace=true
+
+  configs:
+    params:
+      server.insecure: true
+    
+    cm:
+      url: ""
+      application.instanceLabelKey: argocd.argoproj.io/instance
+      
+  controller:
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+
+  redis:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+
+  repoServer:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 200m
+        memory: 512Mi
+
+notifications:
+  enabled: false
+
+applicationSet:
+  enabled: false

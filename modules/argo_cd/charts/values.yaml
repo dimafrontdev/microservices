@@ -1,0 +1,15 @@
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/your-username/helm-charts
+    targetRevision: main
+    path: charts/django-app
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
